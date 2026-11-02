@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LMT Super Relay Run</title>
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#020617;color:#f1f5f9;font-family:system-ui,sans-serif;user-select:none;touch-action:manipulation;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:8px;gap:8px}
+.px{font-family:'Press Start 2P',monospace}
+#hud{width:100%;max-width:960px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:#0f172a;border:4px solid #334155;border-radius:14px;padding:8px 12px}
+#hud h1{font-size:12px;color:#fcd34d;margin:0}
+.b{background:#020617;border:2px solid #334155;border-radius:10px;padding:6px 9px;font-size:10px;margin-right:4px}
+#wrap{position:relative;width:100%;max-width:960px;aspect-ratio:16/9;border:4px solid #334155;border-radius:14px;overflow:hidden;background:#020617}
+canvas{width:100%;height:100%;display:block}
+#modal{position:absolute;inset:0;background:rgba(2,6,23,.88);display:none;align-items:center;justify-content:center;padding:10px;overflow-y:auto}
+#card{position:absolute;left:10px;top:10px;background:rgba(15,23,42,.93);border:2px solid #34d399;border-radius:12px;padding:10px;max-width:290px;font-size:12px;display:none}
+.box{background:#1e293b;border:4px solid #f8fafc;border-radius:14px;padding:16px;max-width:560px;width:100%;max-height:100%;overflow-y:auto;text-align:center}
+.box h2{font-size:13px;color:#fcd34d;margin:0 0 10px;line-height:1.5}
+.box p{font-size:13px;line-height:1.5;margin:8px 0}
+.btn{font-family:'Press Start 2P',monospace;font-size:10px;text-transform:uppercase;border:3px solid #000;box-shadow:0 4px 0 #000;border-radius:10px;padding:10px 14px;margin:4px;cursor:pointer;background:#facc15;color:#000}
+.btn:active{transform:translateY(3px);box-shadow:0 1px 0 #000}
+.g{background:#22c55e;color:#fff}.bl{background:#3b82f6;color:#fff}
+.opt{display:block;width:100%;text-align:left;padding:12px;margin:8px 0;border-radius:10px;border:2px solid #475569;background:#334155;color:#fff;font-weight:700;font-size:13px;cursor:pointer}
+.opt:disabled{cursor:default;opacity:.85}.ok{background:#065f46!important;border-color:#34d399!important}.no{background:#881337!important;border-color:#fb7185!important}
+#bar{height:10px;background:#0f172a;border:2px solid #000;border-radius:6px;overflow:hidden;margin:6px 0}
+#bi{display:block;height:100%;width:100%;background:linear-gradient(90deg,#34d399,#fbbf24,#f43f5e)}
+table{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}td{padding:5px 6px;border-bottom:1px solid #475569;text-align:left}td:last-child{text-align:right;color:#fcd34d}
+#touch{display:none;width:100%;max-width:960px;justify-content:space-between}
+@media(hover:none){#touch{display:flex}}
+</style>
+</head>
+<body>
+<div id="hud">
+  <h1 class="px">LMT SUPER RELAY RUN</h1>
+  <div><span class="b px" id="h">♥♥♥</span><span class="b px" id="c">💰 0</span><span class="b px" id="s">🏆 0</span><button class="btn" id="m" onclick="toggleMute()">♪ ON</button></div>
+</div>
+<div id="wrap"><canvas id="cv" width="960" height="540"></canvas><div id="card"></div><div id="modal"></div></div>
+<div id="touch"><div><button class="btn bl" id="tl">◀</button><button class="btn bl" id="tr">▶</button></div><button class="btn" id="tj">Jump ⬆</button></div>
+
+<script>
+var $ = function (i) { return document.getElementById(i); };
+
+/* ---------- AUDIO ---------- */
+var ac = null, muted = false, bgm = null;
+function tone(f, t, d, v) {
+  if (muted) return;
+  try {
+    ac = ac || new (window.AudioContext || window.webkitAudioContext)();
+    if (ac.state === 'suspended') ac.resume();
+    var o = ac.createOscillator(), g = ac.createGain(), n = ac.currentTime;
+    o.type = t || 'square'; o.frequency.value = f;
+    g.gain.setValueAtTime(v || .07, n); g.gain.exponentialRampToValueAtTime(.0001, n + d);
+    o.connect(g); g.connect(ac.destination); o.start(n); o.stop(n + d);
+  } catch (e) {}
+}
+function seq(a, gap, t) { a.forEach(function (f, i) { setTimeout(function () { tone(f, t, .12, .08); }, i * gap); }); }
+var SFX = {
+  jump: function () { seq([300, 450], 40); },
+  coin: function () { seq([988, 1319], 70); },
+  hit: function () { seq([180, 120, 70], 70, 'sawtooth'); },
+  stomp: function () { seq([80, 400], 90, 'sawtooth'); },
+  spring: function () { seq([200, 500, 700], 50, 'triangle'); },
+  up: function () { seq([330, 392, 659, 523, 587, 784], 75); },
+  win: function () { seq([523, 659, 784, 1046, 784, 1046], 140); }
+};
+var TUNE = [659,659,0,659,0,523,659,0,784,0,0,0,392,0,0,0,523,0,0,392,0,0,330,0,0,440,0,494,0,466,440,0];
+var BOSSM = [150,0,150,0,200,0,180,0,130,0,130,0,220,0,200,0];
+function music(type) {
+  stopMusic(); if (muted) return;
+  var i = 0, arr = type === 'BOSS' ? BOSSM : TUNE;
+  bgm = setInterval(function () { var f = arr[i++ % arr.length]; if (f) tone(f, type === 'BOSS' ? 'sawtooth' : 'square', .15, .035); }, type === 'BOSS' ? 140 : 200);
+}
+function stopMusic() { if (bgm) { clearInterval(bgm); bgm = null; } }
+function toggleMute() {
+  muted = !muted; $('m').textContent = muted ? '♪ OFF' : '♪ ON';
+  if (muted) stopMusic(); else if (mode === 'PLAY') music(bossMusic ? 'BOSS' : 'TUNE');
+}
+
+/* ---------- DATA (first option is always the correct one; options are shuffled when shown) ---------- */
+var ST = [
+ { n: 'STAGE 1: UPSTREAM & LIQUEFACTION', who: 'Alex (Upstream Originator)', suit: '#ea580c', hat: '#facc15', sky: ['#1d4ed8', '#60a5fa'], sea: '#0284c7', boss: 'FEEDGAS FREEZE GOLEM', bc: '#06b6d4', hp: 2,
+   q: [['What does "LNG" stand for?', ['Liquefied Natural Gas', 'Light Nitrogen Gas', 'Liquid Neon Gasoline'], 'LNG is Liquefied Natural Gas.'],
+       ['Why do we cool natural gas to -162°C?', ['It shrinks ~600x, so it can ship by sea', 'To turn it blue', 'To make it heavier than steel'], 'Liquefaction cuts the volume about 600 times so big cargoes can sail.'],
+       ['What is a long-term contract to buy and sell LNG called?', ['SPA (Sale & Purchase Agreement)', 'VIP (Vessel Insurance Policy)', 'GPS (Gas Pipeline System)'], 'The SPA is the core contract between seller and buyer.']] },
+ { n: 'STAGE 2: CHARTERING & OCEAN SHIPPING', who: 'Capt. Maya (Cargo Scheduler)', suit: '#1e3a8a', hat: '#ffffff', sky: ['#0369a1', '#38bdf8'], sea: '#0369a1', boss: 'CAPTAIN DEMURRAGE KRAKEN', bc: '#9333ea', hp: 2,
+   q: [['Under an FOB deal, who provides the LNG ship?', ['The Buyer, at the loading port', "The Seller, to the Buyer's port", 'Nobody, it goes by truck'], 'In FOB the Buyer sends their own ship to the loading port.'],
+       ['Under a DES deal, who arranges the shipping?', ["The Seller, all the way to the Buyer's port", 'The Buyer, at the gas well', 'The Port Authority'], 'In DES the Seller ships the cargo to the receiving terminal.'],
+       ["What is a Cargo Scheduler's main job?", ['Plan delivery dates, routes and port windows', 'Paint the outside of the ship', 'Drill for oil in the desert'], 'They coordinate the Annual Delivery Program, ships and terminals.']] },
+ { n: 'STAGE 3: GLOBAL TRADING & HEDGING', who: 'Marcus (Senior LNG Trader)', suit: '#0f172a', hat: '#38bdf8', sky: ['#311042', '#f97316'], sea: '#1e1b4b', boss: 'KING VOLATILITY BOWSER', bc: '#dc2626', hp: 3,
+   q: [['What is a "spot cargo"?', ['One LNG cargo traded for near-term delivery', 'A 30-year pipeline contract', 'A damaged ship in drydock'], 'A spot cargo is a one-off trade outside multi-year contracts.'],
+       ['Why do traders love flexible FOB cargoes?', ['They can divert the ship to the higher-paying market', 'The ship can fly over land', 'The gas never gets cold'], 'FOB lets traders send the ship to whichever market (JKM or TTF) pays more.'],
+       ['What happens at the terminal before LNG enters city pipelines?', ['Regasification (warming it back to gas)', 'Freezing it even colder', 'Mixing it with seawater'], 'Terminals warm the liquid back into gas for power plants and homes.']] }
+];
+
+/* ---------- STATE ---------- */
+var cv = $('cv'), cx = cv.getContext('2d'), W = 960, H = 540, GY = 440, LEN = 3200, BX = 2800;
+var mode = 'TITLE', si = 0, hearts = 3, coins = 0, score = 0, inv = 0, bossMusic = false, run = null;
+var qb = [], coinsL = [], pipes = [], plats = [], springs = [], foes = [], boss = null, fts = [], cam = 0, qIdx = 0, qt = 5, qTimer = null;
+var pl = { x: 80, y: 0, w: 38, h: 46, vx: 0, vy: 0, sp: 4.2, jf: -13.5, g: .58, on: false, face: 1 };
+var K = { l: 0, r: 0 };
+var NODES = [{ x: 200, y: 320 }, { x: 500, y: 220 }, { x: 780, y: 300 }];
+var map = { x: 200, y: 320 };
+
+function hud() {
+  var s = ''; for (var i = 0; i < 3; i++) s += i < hearts ? '♥' : '♡';
+  $('h').textContent = s; $('c').textContent = '💰 ' + coins; $('s').textContent = '🏆 ' + score;
+}
+function show(h) { var m = $('modal'); m.innerHTML = h; m.style.display = 'flex'; }
+function hide() { $('modal').style.display = 'none'; }
+function txt(x, y, t, c) { fts.push({ x: x, y: y, t: t, c: c, l: 60 }); }
+function readTop() { try { return JSON.parse(localStorage.getItem('lmtTop') || '[]'); } catch (e) { return []; } }
+
+/* ---------- FLOW: title -> map -> stage -> clear -> scoreboard ---------- */
+function showTitle() {
+  mode = 'TITLE'; stopMusic(); $('card').style.display = 'none';
+  var b = readTop()[0];
+  show('<div class="box"><div style="font-size:40px">❓</div><h2 class="px" style="font-size:16px">LMT SUPER RELAY RUN</h2>' +
+    '<p>LNG Marketing &amp; Trading · Overworld Edition</p>' +
+    '<p style="color:#cbd5e1;font-size:12px">Pass the baton from Originator to Captain to Trader. Answer every [?] quiz within 5 seconds, stomp each boss and keep your hearts.</p>' +
+    '<p style="font-size:12px">← → / A D move · Space / W jump · 1-3 answer quizzes</p>' +
+    (b ? '<p class="px" style="font-size:10px;color:#fcd34d">BEST: ' + b + '</p>' : '') +
+    '<button class="btn g" onclick="newGame()">▶ Press start</button></div>');
+}
+function newGame() {
+  hearts = 3; coins = 0; score = 0;
+  run = { ans: [[null, null, null], [null, null, null], [null, null, null]], boss: [0, 0, 0] };
+  hud(); goMap(0);
+}
+function goMap(i) {
+  clearInterval(qTimer); hide(); stopMusic(); mode = 'MAP'; si = i;
+  map.x = NODES[i].x; map.y = NODES[i].y; showCard();
+}
+function showCard() {
+  var s = ST[si], n = run.ans[si].filter(function (a) { return a !== null; }).length, d = $('card');
+  d.style.display = 'block';
+  d.innerHTML = '<b class="px" style="font-size:9px;color:#fcd34d">WORLD ' + (si + 1) + '-1</b><div style="font-weight:800;margin:6px 0">' + s.n + '</div>' +
+    '<div style="color:#cbd5e1">' + s.who + '</div><div style="margin:6px 0">Quiz: ' + n + '/3 · Boss: ' + (run.boss[si] ? '✓' : '✗') + '</div>' +
+    '<button class="btn g" onclick="enter()">▶ Enter</button><button class="btn bl" onclick="endRun()">🏁 Finish</button>' +
+    '<div style="font-size:11px;color:#94a3b8;margin-top:4px">← / → choose · Space enter</div>';
+}
+function sel(i) { si = i; SFX.coin(); showCard(); }
+function enter() { $('card').style.display = 'none'; hide(); build(si); mode = 'PLAY'; music('TUNE'); }
+
+function build(i) {
+  si = i; var a = run.ans[i];
+  qb = [0, 1, 2].map(function (k) { return { i: k, x: 700 + k * 700, y: 280, w: 45, h: 45, done: a[k] !== null, b: 0 }; });
+  coinsL = [[450, 360], [770, 200], [1050, 360], [1470, 200], [1750, 360], [2170, 200], [2500, 360]].map(function (p) { return { x: p[0], y: p[1], got: 0 }; });
+  pipes = [[350, 70, 'LNG FEED'], [1100, 100, 'BOG TANK'], [1800, 80, 'FOB PORT']].map(function (p) { return { x: p[0], y: GY - p[1], w: 60, h: p[1], t: p[2] }; });
+  plats = [[650, 340, 140], [1350, 340, 140], [2050, 340, 140], [BX - 120, 320, 160], [BX + 80, 240, 160]].map(function (p) { return { x: p[0], y: p[1], w: p[2], h: 20 }; });
+  springs = [680, 1380, BX - 60].map(function (px) { return { x: px, y: GY - 25, w: 36, h: 25 }; });
+  foes = [[500, -1.5, 400, 620], [1200, -1.8, 1050, 1300], [1900, -2, 1800, 2050]].map(function (p, i) { return { x: p[0], y: GY - 32, w: 36, h: 32, vx: p[1], a: p[2], b: p[3], alive: 1, k: i % 2 }; });
+  boss = { x: BX + 120, y: GY - 75, w: 75, h: 75, vx: -1.2, a: BX + 20, b: BX + 380, hp: ST[i].hp, max: ST[i].hp, alive: 1 };
+  hearts = 3; inv = 0; bossMusic = false; fts = [];
+  pl.x = 80; pl.y = GY - pl.h - 10; pl.vx = pl.vy = 0; cam = 0; hud();
+}
+
+function nextStage() {
+  for (var k = 1; k <= 3; k++) { var j = (si + k) % 3; if (!run.boss[j]) return j; }
+  return -1;
+}
+function clearStage() {
+  mode = 'CLEAR'; var s = ST[si], nx = nextStage();
+  show('<div class="box"><h2 class="px">WORLD ' + (si + 1) + '-1 CLEARED!</h2><p>Great job, ' + s.who + '! The baton goes to the next desk with zero demurrage.</p>' +
+    '<p class="px" style="font-size:10px;color:#fcd34d">SCORE ' + score + ' · ' + coins + ' MMBtu</p>' +
+    '<button class="btn bl" onclick="goMap(' + si + ')">🗺 Map</button>' +
+    (nx >= 0 ? '<button class="btn g" onclick="si=' + nx + ';enter()">Next stage ▶</button>' : '<button class="btn g" onclick="endRun()">🏁 Scoreboard</button>') + '</div>');
+}
+function endRun() {
+  mode = 'END'; clearInterval(qTimer); stopMusic(); $('card').style.display = 'none';
+  var tq = 0, rows = '', bosses = 0;
+  ST.forEach(function (s, i) {
+    var c = run.ans[i].filter(function (a) { return a === true; }).length; tq += c; bosses += run.boss[i];
+    rows += '<tr><td>' + (i + 1) + '. ' + s.n.split(': ')[1] + '</td><td>Quiz ' + c + '/3 · Boss ' + (run.boss[i] ? '✓' : '✗') + '</td></tr>';
+  });
+  var top = readTop(), prev = top[0] || 0;
+  top.push(score); top.sort(function (a, b) { return b - a; }); top = top.slice(0, 5);
+  try { localStorage.setItem('lmtTop', JSON.stringify(top)); } catch (e) {}
+  var rank = hearts <= 0 && bosses < 3 ? 'TRAINEE (OUT OF HEARTS)' : score >= 5500 ? 'MASTER TRADER' : score >= 3500 ? 'SENIOR TRADER' : score >= 1500 ? 'JUNIOR TRADER' : 'TRAINEE';
+  var tl = ''; top.forEach(function (v, i) { tl += '<tr><td>#' + (i + 1) + '</td><td>' + v + '</td></tr>'; });
+  show('<div class="box"><h2 class="px">' + (bosses === 3 ? '🏆 ALL WORLDS CONQUERED!' : 'FINAL SCOREBOARD') + '</h2>' +
+    '<p class="px" style="font-size:11px;color:#34d399">RANK: ' + rank + '</p><table>' + rows +
+    '<tr><td>Quiz correct</td><td>' + tq + '/9</td></tr><tr><td>Bosses beaten</td><td>' + bosses + '/3</td></tr>' +
+    '<tr><td>Cargo coins</td><td>' + coins + ' MMBtu</td></tr><tr><td><b>TOTAL SCORE</b></td><td><b>' + score + '</b></td></tr></table>' +
+    (score > prev ? '<p class="px" style="font-size:10px;color:#fcd34d">★ NEW BEST! ★</p>' : '') +
+    '<p style="font-size:11px;color:#94a3b8;margin:4px 0">TOP 5 (this browser)</p><table>' + tl + '</table>' +
+    '<button class="btn g" onclick="newGame()">↻ Play again</button><button class="btn bl" onclick="showTitle()">Title</button></div>');
+}
+
+/* ---------- QUIZ ---------- */
+function ask(i) {
+  mode = 'Q'; K.l = K.r = 0; qIdx = i; SFX.up();
+  var q = ST[si].q[i], ord = [0, 1, 2];
+  for (var k = 2; k > 0; k--) { var j = Math.floor(Math.random() * (k + 1)), t = ord[k]; ord[k] = ord[j]; ord[j] = t; }
+  var h = '<div class="box"><h2 class="px">WORLD ' + (si + 1) + '-1 · QUESTION ' + (i + 1) + '/3</h2>' +
+    '<div class="px" style="display:flex;justify-content:space-between;font-size:10px"><span>⏱ <span id="qt">5.0s</span></span><span style="color:#34d399">+150</span></div>' +
+    '<div id="bar"><i id="bi"></i></div><p><b>' + q[0] + '</b></p><div id="opts">';
+  ord.forEach(function (o, p) { h += '<button class="opt" data-ok="' + (o === 0 ? 1 : 0) + '" onclick="pick(this)">' + 'ABC'[p] + ') ' + q[1][o] + '</button>'; });
+  h += '</div><div id="fb"></div><div id="go"></div></div>';
+  show(h); qt = 5; clearInterval(qTimer); qTimer = setInterval(tick, 100);
+}
+function lock() { [].forEach.call($('opts').children, function (o) { o.disabled = true; }); }
+function tick() {
+  qt = Math.max(0, qt - .1); $('qt').textContent = qt.toFixed(1) + 's'; $('bi').style.width = qt * 20 + '%';
+  if (qt <= 0) {
+    clearInterval(qTimer); lock(); hearts = Math.max(1, hearts - 1); hud(); SFX.hit();
+    $('fb').innerHTML = '<p style="color:#fda4af"><b>⏰ TIME UP!</b> Every question is mandatory. Try again.</p>';
+    $('go').innerHTML = '<button class="btn g" onclick="ask(' + qIdx + ')">🔄 Retry</button>';
+  }
+}
+function pick(b) {
+  clearInterval(qTimer); lock();
+  var ok = b.dataset.ok === '1', q = ST[si].q[qIdx];
+  [].forEach.call($('opts').children, function (o) { if (o.dataset.ok === '1') o.classList.add('ok'); });
+  if (!ok) b.classList.add('no');
+  run.ans[si][qIdx] = ok; qb[qIdx].done = true; score += ok ? 150 : 50; if (ok) coins += 5;
+  if (ok) SFX.win(); else SFX.hit(); hud();
+  $('fb').innerHTML = '<p style="color:' + (ok ? '#6ee7b7' : '#fcd34d') + '"><b>' + (ok ? '✅ Correct! +150' : '💡 Desk tip +50') + '</b> ' + q[2] + '</p>';
+  $('go').innerHTML = '<button class="btn g" onclick="resume()">Continue ▶</button>';
+}
+function resume() { hide(); mode = 'PLAY'; txt(pl.x, pl.y - 35, 'GATE UNLOCKED! ▶', '#4ade80'); }
+
+/* ---------- UPDATE ---------- */
+function hurt(kb) {
+  if (inv > 0 || mode !== 'PLAY') return;
+  inv = 90; hearts = Math.max(0, hearts - 1); SFX.hit(); pl.vy = -8; pl.x = Math.max(20, pl.x - kb); hud();
+  txt(pl.x, pl.y - 20, '-1 HEART', '#f87171');
+  if (hearts <= 0) { mode = 'OVER'; stopMusic(); setTimeout(endRun, 1000); }
+}
+function ovX(r) { return pl.x + pl.w > r.x && pl.x < r.x + r.w; }
+function update() {
+  fts.forEach(function (f) { f.y -= .8; f.l--; }); fts = fts.filter(function (f) { return f.l > 0; });
+  if (mode === 'MAP') { map.x += (NODES[si].x - map.x) * .12; map.y += (NODES[si].y - map.y) * .12; return; }
+  if (mode !== 'PLAY') return;
+  if (inv > 0) inv--;
+  if (K.l) { pl.vx = -pl.sp; pl.face = -1; } else if (K.r) { pl.vx = pl.sp; pl.face = 1; } else pl.vx *= .8;
+  pl.x = Math.max(20, Math.min(LEN - 60, pl.x + pl.vx));
+  pipes.forEach(function (p) {   // solid pipe sides
+    if (pl.y + pl.h > p.y + 14 && ovX(p)) { pl.x = (pl.x + pl.w / 2 < p.x + p.w / 2) ? p.x - pl.w : p.x + p.w; pl.vx = 0; }
+  });
+  for (var i = 0; i < qb.length; i++) {   // mandatory quiz gate
+    if (!qb[i].done) {
+      var gx = qb[i].x + qb[i].w + 18;
+      if (pl.x + pl.w > gx) { pl.x = gx - pl.w; pl.vx = 0; qb[i].b = 10; ask(i); return; }
+      break;
+    }
+  }
+  pl.vy += pl.g; pl.y += pl.vy; pl.on = false;
+  springs.forEach(function (s) {
+    if (pl.vy > 0 && ovX(s) && pl.y + pl.h >= s.y && pl.y + pl.h - pl.vy <= s.y + 10) { pl.vy = pl.jf * 1.55; SFX.spring(); txt(s.x, s.y - 20, 'BOING!', '#fde047'); }
+  });
+  if (pl.y + pl.h >= GY) { pl.y = GY - pl.h; pl.vy = 0; pl.on = true; }
+  plats.concat(pipes).forEach(function (p) {
+    if (pl.vy > 0 && ovX(p) && pl.y + pl.h >= p.y && pl.y + pl.h - pl.vy <= p.y + 12) { pl.y = p.y - pl.h; pl.vy = 0; pl.on = true; }
+  });
+  qb.forEach(function (q) {
+    q.b = Math.max(0, q.b - .8);
+    if (!q.done && ovX(q) && pl.vy < 0 && pl.y <= q.y + q.h && pl.y - pl.vy >= q.y + q.h - 12) { pl.vy = 2; q.b = 12; ask(q.i); }
+  });
+  if (mode !== 'PLAY') return;
+  coinsL.forEach(function (c) {
+    if (!c.got && Math.hypot(pl.x + pl.w / 2 - c.x, pl.y + pl.h / 2 - c.y) < 32) {
+      c.got = 1; coins++; score += 100; SFX.coin(); txt(c.x, c.y - 20, '+1 MMBtu', '#4ade80'); hud();
+    }
+  });
+  foes.forEach(function (f) {
+    if (!f.alive) return;
+    f.x += f.vx; if (f.x < f.a || f.x > f.b) f.vx *= -1;
+    if (pl.x + pl.w > f.x + 4 && pl.x < f.x + f.w - 4 && pl.y + pl.h > f.y + 4 && pl.y < f.y + f.h) {
+      if (pl.vy > 0 && pl.y + pl.h - pl.vy <= f.y + 16) { f.alive = 0; pl.vy = -9; score += 200; SFX.stomp(); txt(f.x, f.y - 20, 'STOMP! +200', '#fde047'); hud(); }
+      else hurt(pl.face * 40);
+    }
+  });
+  if (boss.alive) {
+    if (!bossMusic && pl.x > BX - 200) { bossMusic = true; music('BOSS'); }
+    boss.x += boss.vx; if (boss.x < boss.a || boss.x > boss.b) boss.vx *= -1;
+    if (pl.x + pl.w > boss.x + 6 && pl.x < boss.x + boss.w - 6 && pl.y + pl.h > boss.y && pl.y < boss.y + boss.h) {
+      if (pl.vy > 0 && pl.y + pl.h - pl.vy <= boss.y + 20) {
+        boss.hp--; pl.vy = -11; SFX.stomp(); txt(boss.x, boss.y - 30, 'OUCH! HP ' + boss.hp + '/' + boss.max, '#fde047');
+        if (boss.hp <= 0) {
+          boss.alive = 0; score += 1000; run.boss[si] = 1; mode = 'WON'; stopMusic(); SFX.win(); hud();
+          txt(boss.x, boss.y - 40, 'BOSS DEFEATED!', '#4ade80'); setTimeout(clearStage, 1200);
+        }
+      } else hurt(pl.face * 50);
+    }
+  }
+  cam = Math.max(0, Math.min(LEN - W, pl.x - 220));
+}
+
+/* ---------- DRAW (classic 2D platformer look: pixel sprites, bricks, pipes, ? blocks, world map) ---------- */
+function R(a, b, w, h, f) { cx.fillStyle = f; cx.fillRect(a, b, w, h); cx.strokeStyle = '#000'; cx.lineWidth = 3; cx.strokeRect(a, b, w, h); }
+function T(s, a, b, sz, c) { cx.font = 'bold ' + sz + "px 'Press Start 2P',monospace"; cx.textAlign = 'center'; cx.fillStyle = '#000'; cx.fillText(s, a + 1, b + 1); cx.fillStyle = c; cx.fillText(s, a, b); }
+function RR(a, b, w, h, r) { cx.beginPath(); cx.moveTo(a + r, b); cx.arcTo(a + w, b, a + w, b + h, r); cx.arcTo(a + w, b + h, a, b + h, r); cx.arcTo(a, b + h, a, b, r); cx.arcTo(a, b, a + w, b, r); cx.closePath(); }
+function spr(rows, pal, x, y, s, fl) {
+  var w = rows[0].length;
+  for (var r = 0; r < rows.length; r++) for (var c = 0; c < w; c++) {
+    var ch = rows[r][fl ? w - 1 - c : c];
+    if (ch !== '.') { cx.fillStyle = pal[ch]; cx.fillRect(Math.round(x + c * s), Math.round(y + r * s), s, s); }
+  }
+}
+var PLR = ['...HHHHH....', '..HHHHHHHH..', '.HHHHHHHHHH.', '..SSSSSSSS..', '..SSKSSKSS..', '..SSSSSSSSS.', '...SSSSSS...', '..BBBBBBBB..', '.SBBBWWBBBS.', '.SBBBBBBBBS.', '..BBBBBBBB..'];
+var LEG = {
+  stand: ['..BBB..BBB..', '..BBB..BBB..', '.YYYY..YYYY.', '.YYYY..YYYY.'],
+  walk: ['...BBB.BBB..', '..BBB...BBB.', '.YYYY...YYYY', 'YYYY....YYYY'],
+  air: ['..BBBBBBBB..', '.BBB....BBB.', 'YYYY....YYYY', 'YYY......YYY']
+};
+var GMB = ['....DDDD....', '..DDDDDDDD..', '.DDDDDDDDDD.', 'DDWWDDDDWWDD', 'DDWKDDDDKWDD', 'DDDDDDDDDDDD', '.DDDTTTTDDD.', '...TTTTTT...'];
+function drawHero(x, y, sc, st, face, state) {
+  spr(PLR.concat(LEG[state]), { H: st.hat, B: st.suit, S: '#fcbcb0', K: '#000', W: '#fff', Y: '#6b3a10' }, x, y, sc, face < 0);
+}
+function cloud(a, b) { cx.fillStyle = '#fff'; cx.beginPath(); cx.arc(a, b, 14, 0, 7); cx.arc(a + 22, b - 10, 19, 0, 7); cx.arc(a + 46, b, 14, 0, 7); cx.fill(); cx.fillRect(a, b - 3, 46, 17); }
+function bush(a, b) {
+  cx.fillStyle = '#00a800'; cx.strokeStyle = '#000'; cx.lineWidth = 3;
+  [[0, 18], [28, 24], [58, 18]].forEach(function (c) { cx.beginPath(); cx.arc(a + c[0], b - c[1] * .6, c[1], 0, 7); cx.fill(); cx.stroke(); });
+}
+function tree(a, b) {
+  cx.fillStyle = '#6b3a10'; cx.fillRect(a - 3, b, 6, 12); cx.fillStyle = '#008800'; cx.strokeStyle = '#000'; cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(a, b - 2, 15, 0, 7); cx.fill(); cx.stroke(); cx.fillStyle = '#58d854'; cx.beginPath(); cx.arc(a - 5, b - 7, 5, 0, 7); cx.fill();
+}
+function brick(a, b, w, h) {
+  cx.fillStyle = '#c84c0c'; cx.fillRect(a, b, w, h); cx.fillStyle = '#fcbcb0'; cx.fillRect(a, b, w, 2);
+  cx.fillStyle = '#000'; cx.fillRect(a, b + h / 2 - 1, w, 2); cx.fillRect(a + w / 2 - 1, b, 2, h / 2); cx.fillRect(a + w / 4 - 1, b + h / 2, 2, h / 2);
+  cx.strokeStyle = '#000'; cx.lineWidth = 2; cx.strokeRect(a, b, w, h);
+}
+function drawBoss(b, s) {
+  cx.save(); cx.translate(b.x + b.w / 2, b.y); cx.scale(b.vx < 0 ? 1 : -1, 1); cx.translate(-b.w / 2, 0);
+  R(8, 60, 20, 15, '#fcb000'); R(46, 60, 20, 15, '#fcb000');
+  R(24, 16, 50, 46, s.bc);
+  cx.fillStyle = '#fff';
+  [30, 46, 62].forEach(function (a) { cx.beginPath(); cx.moveTo(a, 16); cx.lineTo(a + 7, 0); cx.lineTo(a + 14, 16); cx.closePath(); cx.fill(); cx.stroke(); });
+  R(34, 36, 36, 26, '#fcd838'); R(0, 18, 32, 30, '#fcb000'); R(2, 8, 28, 10, '#d82800');
+  R(8, 26, 10, 9, '#fff'); cx.fillStyle = '#000'; cx.fillRect(8, 29, 4, 5); cx.fillRect(6, 23, 14, 3);
+  cx.fillStyle = '#fff'; cx.fillRect(2, 42, 5, 6); cx.fillRect(12, 42, 5, 6);
+  cx.restore();
+}
+function drawTurtle(f) {
+  cx.save(); cx.translate(f.x + f.w / 2, f.y); cx.scale(f.vx < 0 ? 1 : -1, 1);
+  R(-14, 24, 12, 8, '#fcb000'); R(2, 24, 12, 8, '#fcb000');
+  cx.fillStyle = '#00a800'; cx.strokeStyle = '#000'; cx.lineWidth = 3; cx.beginPath(); cx.ellipse(4, 16, 16, 14, 0, 0, 7); cx.fill(); cx.stroke();
+  cx.fillStyle = '#80e830'; cx.fillRect(-2, 10, 14, 3); cx.fillRect(-2, 18, 14, 3);
+  R(-18, 2, 14, 14, '#fcd838'); cx.fillStyle = '#fff'; cx.fillRect(-13, 6, 5, 5); cx.fillStyle = '#000'; cx.fillRect(-13, 8, 2, 3);
+  cx.restore();
+}
+function drawMap() {
+  var t = Date.now(), i, j;
+  cx.fillStyle = '#3c70ff'; cx.fillRect(0, 0, W, H);
+  cx.fillStyle = 'rgba(255,255,255,.35)';
+  for (i = 0; i < W; i += 90) for (j = 0; j < H; j += 60) cx.fillRect(i + (j % 120 ? 30 : 0) + Math.sin(t / 500 + i + j) * 6, j + 20, 26, 3);
+  RR(40, 100, 880, 360, 70); cx.fillStyle = '#f8d878'; cx.fill(); cx.lineWidth = 4; cx.strokeStyle = '#000'; cx.stroke();
+  RR(56, 116, 848, 328, 56); cx.fillStyle = '#48c000'; cx.fill(); cx.lineWidth = 3; cx.stroke();
+  cx.fillStyle = '#38a000';
+  for (i = 80; i < 860; i += 60) for (j = 140; j < 430; j += 50) cx.fillRect(i + (j / 50 % 2) * 30, j, 6, 6);
+  [[110, 160], [130, 420], [330, 200], [360, 400], [620, 170], [600, 400], [870, 400], [260, 150]].forEach(function (p) { tree(p[0], p[1]); });
+  cx.lineCap = 'round'; cx.lineJoin = 'round'; cx.beginPath();
+  cx.moveTo(200, 320); cx.lineTo(350, 320); cx.lineTo(500, 220); cx.lineTo(640, 260); cx.lineTo(780, 300); cx.lineTo(860, 262);
+  cx.strokeStyle = '#000'; cx.lineWidth = 16; cx.stroke(); cx.strokeStyle = '#f8d878'; cx.lineWidth = 10; cx.stroke();
+  cx.strokeStyle = '#a06000'; cx.lineWidth = 2; cx.setLineDash([2, 12]); cx.stroke(); cx.setLineDash([]);
+  R(95, 330, 70, 22, '#a06000'); T('START', 130, 346, 8, '#fff');
+  R(830, 205, 60, 57, '#bcbcbc'); for (i = 0; i < 4; i++) R(830 + i * 16, 195, 12, 10, '#bcbcbc');
+  R(852, 236, 16, 26, '#000'); cx.fillStyle = '#000'; cx.fillRect(859, 168, 3, 27); cx.fillStyle = '#d82800'; cx.fillRect(862, 168, 16, 10);
+  NODES.forEach(function (n, k) {
+    var on = si === k, done = run && run.boss[k];
+    RR(n.x - 22, n.y - 22, 44, 44, 8); cx.fillStyle = done ? '#fcd838' : '#d82800'; cx.fill();
+    cx.strokeStyle = on ? '#fff' : '#000'; cx.lineWidth = 4; cx.stroke();
+    T(done ? '✓' : String(k + 1), n.x, n.y + 6, 16, done ? '#000' : '#fff'); T('STAGE ' + (k + 1), n.x, n.y + 42, 9, '#fff');
+  });
+  drawHero(map.x - 12, map.y - 52 - Math.abs(Math.sin(t / 250)) * 3, 2, ST[si], 1, 'stand');
+}
+function draw() {
+  cx.clearRect(0, 0, W, H);
+  if (mode === 'MAP' || mode === 'TITLE' || mode === 'END') { drawMap(); return; }
+  var s = ST[si], t = Date.now(), g = cx.createLinearGradient(0, 0, 0, GY), k, i;
+  g.addColorStop(0, s.sky[0]); g.addColorStop(1, s.sky[1]); cx.fillStyle = g; cx.fillRect(0, 0, W, H);
+  for (k = 0; k < 5; k++) cloud(k * 340 - (cam * .15 % 340) + 40, 70 + (k % 2) * 55);
+  cx.fillStyle = '#58d854'; cx.strokeStyle = '#000'; cx.lineWidth = 3;
+  for (k = 0; k < 4; k++) { cx.beginPath(); cx.ellipse(k * 420 - (cam * .3 % 420) + 60, GY, 110, 85, 0, Math.PI, 2 * Math.PI); cx.fill(); cx.stroke(); }
+  cx.save(); cx.translate(-cam, 0);
+  [250, 900, 1500, 2200, 2650].forEach(function (a) { bush(a, GY); });
+  for (i = Math.floor(cam / 32) * 32; i < cam + W + 32; i += 32) for (k = 0; k < 4; k++) brick(i, GY + k * 32, 32, 32);
+  pipes.forEach(function (p) {
+    R(p.x, p.y + 22, p.w, p.h - 22, '#00a800'); cx.fillStyle = '#80e830'; cx.fillRect(p.x + 6, p.y + 24, 8, p.h - 26);
+    cx.fillStyle = '#006800'; cx.fillRect(p.x + p.w - 12, p.y + 24, 8, p.h - 26);
+    R(p.x - 4, p.y, p.w + 8, 24, '#00a800'); cx.fillStyle = '#80e830'; cx.fillRect(p.x + 2, p.y + 3, 8, 18);
+    cx.fillStyle = '#006800'; cx.fillRect(p.x + p.w - 6, p.y + 3, 8, 18); T(p.t, p.x + p.w / 2, p.y + p.h - 8, 7, '#fff');
+  });
+  plats.forEach(function (p) { for (k = 0; k < p.w / 20; k++) brick(p.x + k * 20, p.y, 20, 20); });
+  springs.forEach(function (p) { R(p.x, p.y + 8, p.w, p.h - 8, '#bcbcbc'); R(p.x - 2, p.y, p.w + 4, 8, '#d82800'); });
+  qb.forEach(function (q) {
+    var by = q.y - q.b;
+    if (!q.done) {
+      var gx = q.x + q.w + 18;
+      cx.save(); cx.strokeStyle = 'rgba(239,68,68,.85)'; cx.lineWidth = 6; cx.setLineDash([10, 8]);
+      cx.beginPath(); cx.moveTo(gx, 0); cx.lineTo(gx, GY); cx.stroke(); cx.restore();
+      T('MANDATORY!', gx, GY - 23, 7, '#fef08a');
+    }
+    R(q.x, by, q.w, q.h, q.done ? '#a06000' : ['#fcb000', '#fcd838', '#e09000'][Math.floor(t / 300) % 3]);
+    cx.fillStyle = '#000';
+    [[4, 4], [q.w - 8, 4], [4, q.h - 8], [q.w - 8, q.h - 8]].forEach(function (d) { cx.fillRect(q.x + d[0], by + d[1], 4, 4); });
+    T(q.done ? '✓' : '?', q.x + q.w / 2 + 2, by + 33, 20, q.done ? '#fcbcb0' : '#fff');
+    if (!q.done) T('QUIZ #' + (q.i + 1) + ' (5s)', q.x + q.w / 2, by - 10, 9, '#fde047');
+  });
+  coinsL.forEach(function (c) {
+    if (c.got) return;
+    var w = Math.abs(Math.cos(t / 160)) * 9 + 2;
+    cx.fillStyle = '#fcb000'; cx.strokeStyle = '#000'; cx.lineWidth = 2.5; cx.beginPath(); cx.ellipse(c.x, c.y, w, 13, 0, 0, 7); cx.fill(); cx.stroke();
+    cx.fillStyle = '#fcd838'; cx.beginPath(); cx.ellipse(c.x, c.y, w * .5, 8, 0, 0, 7); cx.fill();
+  });
+  foes.forEach(function (f) {
+    if (!f.alive) return;
+    if (f.k) drawTurtle(f);
+    else { var a = Math.floor(t / 160) % 2; spr(GMB.concat(a ? ['.KKKK..KKKK.', '.KKKK..KKKK.'] : ['..KKKKKKKK..', '..KKKKKKKK..']), { D: '#a05000', T: '#fcbcb0', W: '#fff', K: '#000' }, f.x, f.y + 2, 3, false); }
+  });
+  if (boss.alive) {
+    drawBoss(boss, s);
+    T(s.boss, boss.x + boss.w / 2, boss.y - 24, 8, '#fef08a'); T('HP ' + boss.hp + '/' + boss.max, boss.x + boss.w / 2, boss.y - 40, 8, '#fef08a');
+  }
+  if (inv % 8 < 4) drawHero(pl.x + 1, pl.y + 1, 3, s, pl.face, !pl.on ? 'air' : ((K.l || K.r) && Math.floor(t / 110) % 2 ? 'walk' : 'stand'));
+  fts.forEach(function (f) { T(f.t, f.x, f.y, 11, f.c); });
+  cx.restore();
+}
+
+/* ---------- INPUT ---------- */
+function jump() { if (mode === 'PLAY' && pl.on) { pl.vy = pl.jf; SFX.jump(); } }
+addEventListener('keydown', function (e) {
+  if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) > -1) e.preventDefault();
+  var l = e.code === 'ArrowLeft' || e.code === 'KeyA', r = e.code === 'ArrowRight' || e.code === 'KeyD';
+  var j = e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW';
+  if (mode === 'Q' && /^Digit[1-3]$/.test(e.code)) { var b = $('opts').children[+e.code[5] - 1]; if (b && !b.disabled) b.click(); return; }
+  if (e.repeat && mode !== 'PLAY') return;
+  if (mode === 'TITLE' && (j || e.code === 'Enter')) { newGame(); return; }
+  if (mode === 'MAP') { if (l) sel(Math.max(0, si - 1)); if (r) sel(Math.min(2, si + 1)); if (j || e.code === 'Enter') enter(); return; }
+  if (mode === 'PLAY') { if (l) K.l = 1; if (r) K.r = 1; if (j && !e.repeat) jump(); }
+});
+addEventListener('keyup', function (e) {
+  if (e.code === 'ArrowLeft' || e.code === 'KeyA') K.l = 0;
+  if (e.code === 'ArrowRight' || e.code === 'KeyD') K.r = 0;
+});
+addEventListener('blur', function () { K.l = K.r = 0; });
+addEventListener('click', function () { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+function hold(id, fn, v) {
+  var el = $(id);
+  ['touchstart'].forEach(function (n) { el.addEventListener(n, function (e) { e.preventDefault(); fn(1); }); });
+  ['touchend', 'touchcancel'].forEach(function (n) { el.addEventListener(n, function (e) { e.preventDefault(); fn(0); }); });
+}
+hold('tl', function (v) { K.l = v; }); hold('tr', function (v) { K.r = v; }); hold('tj', function (v) { if (v) jump(); });
+cv.addEventListener('click', function (e) {
+  if (mode !== 'MAP') return;
+  var rc = cv.getBoundingClientRect(), mx = (e.clientX - rc.left) * W / rc.width, my = (e.clientY - rc.top) * H / rc.height;
+  NODES.forEach(function (n, i) { if (Math.hypot(mx - n.x, my - n.y) < 35) sel(i); });
+});
+
+/* ---------- LOOP (fixed 60 Hz timestep, independent of monitor refresh rate) ---------- */
+var last = 0, acc = 0, STEP = 1000 / 60;
+function loop(t) {
+  acc += Math.min(t - last, 100); last = t;
+  while (acc >= STEP) { update(); acc -= STEP; }
+  draw(); requestAnimationFrame(loop);
+}
+window.onload = function () { run = { ans: [[null, null, null], [null, null, null], [null, null, null]], boss: [0, 0, 0] }; hud(); showTitle(); requestAnimationFrame(loop); };
+</script>
+</body>
+</html>
