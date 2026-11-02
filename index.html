@@ -2,12 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>LMT Super Relay Run</title>
 <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
 <style>
 *{box-sizing:border-box}
-body{margin:0;background:#020617;color:#f1f5f9;font-family:system-ui,sans-serif;user-select:none;touch-action:manipulation;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:8px;gap:8px}
+body{margin:0;background:#020617;color:#f1f5f9;font-family:system-ui,sans-serif;user-select:none;touch-action:manipulation;display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:max(8px,env(safe-area-inset-top,0px)) 8px max(8px,env(safe-area-inset-bottom,0px));gap:8px}
+input.nm{width:100%;max-width:300px;padding:12px;margin:8px 0;border-radius:10px;border:3px solid #475569;background:#0f172a;color:#fff;font-size:12px;text-align:center}
 .px{font-family:'Press Start 2P',monospace}
 #hud{width:100%;max-width:960px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;background:#0f172a;border:4px solid #334155;border-radius:14px;padding:8px 12px}
 #hud h1{font-size:12px;color:#fcd34d;margin:0}
@@ -112,6 +113,46 @@ function hide() { $('modal').style.display = 'none'; }
 function txt(x, y, t, c) { fts.push({ x: x, y: y, t: t, c: c, l: 60 }); }
 function readTop() { try { return JSON.parse(localStorage.getItem('lmtTop') || '[]'); } catch (e) { return []; } }
 
+/* ---------- PLAYER NAME + SHARED LEADERBOARD ---------- */
+var playerName = '', DB = null;
+try { playerName = localStorage.getItem('lmtName') || ''; } catch (e) {}
+function esc(s) { return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+function initDb() {
+  try {
+    if (window.claude && claude.use) claude.use('db').then(function (d) { DB = d; if (mode === 'TITLE' || mode === 'END') fillBoard(); }).catch(function () {});
+  } catch (e) {}
+}
+function fillBoard() {
+  var el = $('lb'); if (!el) return;
+  if (!DB) {
+    var h = '<p style="font-size:11px;color:#94a3b8">Shared board not available here. Your local best:</p><table>';
+    readTop().forEach(function (v, i) { h += '<tr><td>#' + (i + 1) + '</td><td>' + (Number(v) || 0) + '</td></tr>'; });
+    el.innerHTML = h + '</table>'; return;
+  }
+  el.innerHTML = '<p style="font-size:12px;color:#94a3b8">Loading…</p>';
+  var done = false, tm = setTimeout(function () { if (!done) { done = true; if ($('lb') === el) el.innerHTML = '<p style="font-size:11px;color:#fda4af">Could not load the leaderboard.</p>'; } }, 8000);
+  DB.collection('scores').orderBy('score', 'desc').limit(10).get().then(function (sn) {
+    if (done) return; done = true; clearTimeout(tm);
+    if ($('lb') !== el) return;
+    if (sn.empty) { el.innerHTML = '<p style="font-size:12px;color:#94a3b8">No scores yet. Be the first!</p>'; return; }
+    var h = '<table>';
+    sn.docs.forEach(function (d, i) { var v = d.data() || {}; h += '<tr><td>#' + (i + 1) + ' ' + esc(String(v.name || '???').slice(0, 12)) + '</td><td>' + (Number(v.score) || 0) + '</td></tr>'; });
+    el.innerHTML = h + '</table>';
+  }).catch(function () { if (!done) { done = true; clearTimeout(tm); if ($('lb') === el) el.innerHTML = '<p style="font-size:11px;color:#fda4af">Could not load the leaderboard.</p>'; } });
+}
+function submitScore(tq, bs) {
+  if (!DB || !(score > 0)) { fillBoard(); return; }
+  DB.collection('scores').add({ name: playerName, score: score, quiz: tq, bosses: bs, at: Date.now() }).then(fillBoard).catch(function () {
+    var el = $('lb'); if (el) el.innerHTML = '<p style="font-size:11px;color:#fda4af">Could not save your score to the shared board (you may need contributor access).</p>';
+  });
+}
+function startGame() {
+  var inp = $('nm'), v = (inp ? inp.value : playerName).replace(/[<>&"]/g, '').trim().slice(0, 12);
+  if (!v) { if (inp) { inp.style.borderColor = '#f43f5e'; inp.focus(); } return; }
+  playerName = v; try { localStorage.setItem('lmtName', v); } catch (e) {}
+  newGame();
+}
+
 /* ---------- FLOW: title -> map -> stage -> clear -> scoreboard ---------- */
 function showTitle() {
   mode = 'TITLE'; stopMusic(); $('card').style.display = 'none';
@@ -121,7 +162,9 @@ function showTitle() {
     '<p style="color:#cbd5e1;font-size:12px">Pass the baton from Originator to Captain to Trader. Answer every [?] quiz within 5 seconds, stomp each boss and keep your hearts.</p>' +
     '<p style="font-size:12px">← → / A D move · Space / W jump · 1-3 answer quizzes</p>' +
     (b ? '<p class="px" style="font-size:10px;color:#fcd34d">BEST: ' + b + '</p>' : '') +
-    '<button class="btn g" onclick="newGame()">▶ Press start</button></div>');
+    '<div class="px" style="font-size:9px;color:#94a3b8">REGISTER YOUR NAME</div><input id="nm" class="nm px" maxlength="12" placeholder="YOUR NAME" value="' + esc(playerName) + '"><br>' +
+    '<button class="btn g" onclick="startGame()">▶ Press start</button><p class="px" style="font-size:9px;color:#94a3b8">🌍 GLOBAL TOP 10</p><div id="lb"></div></div>');
+  fillBoard();
 }
 function newGame() {
   hearts = 3; coins = 0; score = 0;
@@ -180,12 +223,13 @@ function endRun() {
   var rank = hearts <= 0 && bosses < 3 ? 'TRAINEE (OUT OF HEARTS)' : score >= 5500 ? 'MASTER TRADER' : score >= 3500 ? 'SENIOR TRADER' : score >= 1500 ? 'JUNIOR TRADER' : 'TRAINEE';
   var tl = ''; top.forEach(function (v, i) { tl += '<tr><td>#' + (i + 1) + '</td><td>' + v + '</td></tr>'; });
   show('<div class="box"><h2 class="px">' + (bosses === 3 ? '🏆 ALL WORLDS CONQUERED!' : 'FINAL SCOREBOARD') + '</h2>' +
-    '<p class="px" style="font-size:11px;color:#34d399">RANK: ' + rank + '</p><table>' + rows +
+    '<p class="px" style="font-size:11px;color:#34d399">' + esc(playerName) + ' · RANK: ' + rank + '</p><table>' + rows +
     '<tr><td>Quiz correct</td><td>' + tq + '/9</td></tr><tr><td>Bosses beaten</td><td>' + bosses + '/3</td></tr>' +
     '<tr><td>Cargo coins</td><td>' + coins + ' MMBtu</td></tr><tr><td><b>TOTAL SCORE</b></td><td><b>' + score + '</b></td></tr></table>' +
     (score > prev ? '<p class="px" style="font-size:10px;color:#fcd34d">★ NEW BEST! ★</p>' : '') +
-    '<p style="font-size:11px;color:#94a3b8;margin:4px 0">TOP 5 (this browser)</p><table>' + tl + '</table>' +
+    '<p class="px" style="font-size:9px;color:#94a3b8;margin:8px 0 4px">🌍 GLOBAL TOP 10</p><div id="lb"></div>' +
     '<button class="btn g" onclick="newGame()">↻ Play again</button><button class="btn bl" onclick="showTitle()">Title</button></div>');
+  submitScore(tq, bosses);
 }
 
 /* ---------- QUIZ ---------- */
@@ -423,12 +467,13 @@ function draw() {
 /* ---------- INPUT ---------- */
 function jump() { if (mode === 'PLAY' && pl.on) { pl.vy = pl.jf; SFX.jump(); } }
 addEventListener('keydown', function (e) {
+  if (e.target && e.target.tagName === 'INPUT') { if (e.code === 'Enter') startGame(); return; }
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) > -1) e.preventDefault();
   var l = e.code === 'ArrowLeft' || e.code === 'KeyA', r = e.code === 'ArrowRight' || e.code === 'KeyD';
   var j = e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW';
   if (mode === 'Q' && /^Digit[1-3]$/.test(e.code)) { var b = $('opts').children[+e.code[5] - 1]; if (b && !b.disabled) b.click(); return; }
   if (e.repeat && mode !== 'PLAY') return;
-  if (mode === 'TITLE' && (j || e.code === 'Enter')) { newGame(); return; }
+  if (mode === 'TITLE' && (j || e.code === 'Enter')) { startGame(); return; }
   if (mode === 'MAP') { if (l) sel(Math.max(0, si - 1)); if (r) sel(Math.min(2, si + 1)); if (j || e.code === 'Enter') enter(); return; }
   if (mode === 'PLAY') { if (l) K.l = 1; if (r) K.r = 1; if (j && !e.repeat) jump(); }
 });
@@ -437,7 +482,7 @@ addEventListener('keyup', function (e) {
   if (e.code === 'ArrowRight' || e.code === 'KeyD') K.r = 0;
 });
 addEventListener('blur', function () { K.l = K.r = 0; });
-addEventListener('click', function () { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); });
+addEventListener('click', function () { var a = document.activeElement; if (a && a.tagName !== 'INPUT' && a.blur) a.blur(); });
 function hold(id, fn, v) {
   var el = $(id);
   ['touchstart'].forEach(function (n) { el.addEventListener(n, function (e) { e.preventDefault(); fn(1); }); });
@@ -457,7 +502,7 @@ function loop(t) {
   while (acc >= STEP) { update(); acc -= STEP; }
   draw(); requestAnimationFrame(loop);
 }
-window.onload = function () { run = { ans: [[null, null, null], [null, null, null], [null, null, null]], boss: [0, 0, 0] }; hud(); showTitle(); requestAnimationFrame(loop); };
+window.onload = function () { run = { ans: [[null, null, null], [null, null, null], [null, null, null]], boss: [0, 0, 0] }; hud(); showTitle(); requestAnimationFrame(loop); initDb(); };
 </script>
 </body>
 </html>
